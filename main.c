@@ -124,15 +124,15 @@ void display_map(uint8_t start_row) {
   // First, clear console
   HAL_UART_Transmit(&huart1, (uint8_t*) clear_screen, sizeof(clear_screen), 1000);
 
-//  char real_char = map[(start_row + char_vert_pos) % 9][char_horz_pos];
-//  map[(start_row + char_vert_pos) % 9][char_horz_pos] = 'O';
+  char real_char = map[(start_row + char_vert_pos) % N_ROWS][char_horz_pos];
+  map[(start_row + char_vert_pos) % N_ROWS][char_horz_pos] = 'O';
 
   // Display map
   for (int row = 0; row < N_ROWS; row++) {
     HAL_UART_Transmit(&huart1, (uint8_t*) map[(start_row + row) % N_ROWS], sizeof(map[row]), 1000);
   }
 
-//  map[(start_row + char_vert_pos) % 9][char_horz_pos] = real_char;
+  map[(start_row + char_vert_pos) % N_ROWS][char_horz_pos] = real_char;
 }
 /* USER CODE END 0 */
 

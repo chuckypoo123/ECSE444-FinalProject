@@ -33,6 +33,8 @@
 /* USER CODE BEGIN PD */
 #define N_COLS 5
 #define N_ROWS 10
+#define TRUE 1
+#define FALSE 0
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -60,7 +62,11 @@ static void MX_RNG_Init(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+
 char clear_screen[5] = {0x1B, 0x5B, 0x32, 0x4A, 0x00};
+float score = 0;
+char uart_buf[100] = "";
+float collision = 0;
 
 // TODO: Make variables names more descriptive
 uint8_t char_horz_pos = 5;
@@ -118,11 +124,18 @@ void update_map() {
     }
   }
   top_row = (top_row + 1) % N_ROWS;
+
+  //   Detects collision
+    if(map[top_row][char_horz_pos] == 'X'){
+    			collision = TRUE;
+    	}
 }
 
 void display_map(uint8_t start_row) {
   // First, clear console
   HAL_UART_Transmit(&huart1, (uint8_t*) clear_screen, sizeof(clear_screen), 1000);
+
+  if(collision == FALSE){
 
   char real_char = map[(start_row + char_vert_pos) % N_ROWS][char_horz_pos];
   map[(start_row + char_vert_pos) % N_ROWS][char_horz_pos] = 'O';
@@ -133,6 +146,19 @@ void display_map(uint8_t start_row) {
   }
 
   map[(start_row + char_vert_pos) % N_ROWS][char_horz_pos] = real_char;
+  }
+  else{
+	  // We should also:
+	  // display the high score
+	  // Save the score if it beats the high score
+	  char buf[100] = "";
+	  sprintf(buf, "Score: %d points", (int) score);
+	  HAL_UART_Transmit(&huart1, (uint8_t*) buf, sizeof(buf), 1000);
+	  // Wait for new game to start...
+	  while(1){
+
+	  }
+  }
 }
 /* USER CODE END 0 */
 
@@ -177,6 +203,10 @@ int main(void)
     display_map(top_row);
     HAL_Delay(750);
     update_map();
+    // Start keeping score
+    score++;
+
+
 //    if (char_horz_pos == 9) {
 //      char_horz_pos = 1;
 //    }

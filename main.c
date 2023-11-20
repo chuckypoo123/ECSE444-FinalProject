@@ -56,10 +56,10 @@
 #define VALUE_LIMIT 4000
 
 #define NOTE_0_SIZE 300
-#define NOTE_1_SIZE 300
-#define NOTE_2_SIZE 1000
+#define NOTE_1_SIZE 400
+#define NOTE_2_SIZE 800
 #define NOTE_3_SIZE 300
-#define NOTE_4_SIZE 250
+#define NOTE_4_SIZE 200
 #define NOTE_5_SIZE 500
 
 #define NOTE_0_ADD MUSIC_ADD
@@ -376,7 +376,7 @@ int main(void)
 //	  	  default:
 //	  }
 
-	  HAL_Delay(750);
+	  HAL_Delay(500);
 	  display_map(top_row);
 	  update_map();
 //	   Start keeping score
@@ -862,7 +862,7 @@ static void MX_TIM5_Init(void)
   htim5.Instance = TIM5;
   htim5.Init.Prescaler = 40000;
   htim5.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim5.Init.Period = 1500;
+  htim5.Init.Period = 1000;
   htim5.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
   htim5.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
   if (HAL_TIM_Base_Init(&htim5) != HAL_OK)

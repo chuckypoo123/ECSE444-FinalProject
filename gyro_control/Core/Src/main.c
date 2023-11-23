@@ -139,8 +139,9 @@ void gen_notes(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-char clear_screen[5] = {0x1B, 0x5B, 0x32, 0x4A, 0x00};
-float score = 0;
+char clear_screen[6] = {0x1B, 0x5B, 0x32, 0x4A, 0x00, 0x0d};
+
+int score = 0;
 float collision = 0;
 
 uint32_t note_0[NOTE_0_SIZE];
@@ -153,7 +154,7 @@ uint32_t note_5[NOTE_5_SIZE];
 // TODO: Make variables names more descriptive
 volatile uint8_t char_horz_pos = 5;
 uint8_t char_vert_pos = 1;
-char map[N_ROWS][2 * N_COLS + 1 + 3] = {
+char map[N_ROWS][2 * N_COLS +1 +2 +1] = { // +1 (last vert pipe) +2 (newline) +1 (stop char)
     "| | | | | |\r\n",
     "| | | | | |\r\n",
     "| | | | | |\r\n",
@@ -165,6 +166,10 @@ char map[N_ROWS][2 * N_COLS + 1 + 3] = {
     "| | | | | |\r\n",
     "| | | | | |\r\n",
 };
+
+char score_string[2 * N_COLS +2] = "";
+
+
 
 uint8_t top_row = 0;
 
@@ -217,30 +222,58 @@ void display_map(uint8_t start_row) {
   // First, clear console
   HAL_UART_Transmit(&huart1, (uint8_t*) clear_screen, sizeof(clear_screen), 1000);
 
-  if(collision == FALSE){
 
 	char real_char = map[(start_row + char_vert_pos) % N_ROWS][char_horz_pos];
 	map[(start_row + char_vert_pos) % N_ROWS][char_horz_pos] = 'O';
 
 	// Display map
 	for (int row = 0; row < N_ROWS; row++) {
-	HAL_UART_Transmit(&huart1, (uint8_t*) map[(start_row + row) % N_ROWS], sizeof(map[row]), 1000);
+	  HAL_UART_Transmit(&huart1, (uint8_t*) map[(start_row + row) % N_ROWS], sizeof(map[row]), 1000);
 	}
 
 	map[(start_row + char_vert_pos) % N_ROWS][char_horz_pos] = real_char;
-  }
-  else{
-	// We should also:
-	// display the high score
-	// Save the score if it beats the high score
-	char buf[100] = "";
-	sprintf(buf, "Score: %d points", (int) score);
-	HAL_UART_Transmit(&huart1, (uint8_t*) buf, sizeof(buf), 1000);
-	// Wait for new game to start...
-	while(1){
 
-	}
+	sprintf(score_string, "Score:%5d", score); // TODO: Change hardcoded value
+	HAL_UART_Transmit(&huart1, (uint8_t*) score_string, sizeof(score_string), 1000);
+}
+
+void end_game() {
+  // Place score in top 10
+  int cur_run_rank = 0;
+  int high_scores[11] = {666666, 55555, 4444, 333, 22, 1, 0, 0, 0, 0, 0};
+
+  for (int rank = 9; rank>=0; rank--) {
+    if (score > high_scores[rank]) {
+      high_scores[rank+1] = high_scores[rank];
+    }
+    else {
+      high_scores[rank+1] = score;
+      // +2: +1 because variable rank is -1 from actual rank
+      //     and +1 because we are lower thank current actual rank
+      cur_run_rank = rank + 2;
+      break;
+    }
   }
+
+  // Save top 10
+
+  // Display top 10
+  HAL_UART_Transmit(&huart1, (uint8_t*) clear_screen, sizeof(clear_screen), 1000);
+  char title[] = "High scores:\r\n";
+  HAL_UART_Transmit(&huart1, (uint8_t*) title, sizeof(title), 1000);
+
+  char ranking_line[20] = "";
+  for (int rank=1; rank<=10; rank++) {
+    sprintf(ranking_line, "%2d  %5d\r\n", rank, high_scores[rank]);
+    HAL_UART_Transmit(&huart1, (uint8_t*) ranking_line, sizeof(ranking_line), 1000);
+  }
+
+  char buf[100] = "";
+  sprintf(buf, "\n Your score: %d points", score);
+  HAL_UART_Transmit(&huart1, (uint8_t*) buf, sizeof(buf), 1000);
+
+  // Wait for new game to start...
+  while(1) {}
 }
 /* USER CODE END 0 */
 
@@ -316,77 +349,11 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-
-
-//	  if((joystickXY[0] >= 3000) || (centered == 1)){
-//		  mode = left;
-//		  centered = 0;
-//	  }
-//	  else if((joystickXY[0] <= 1000)  || (centered == 1)){
-//		  mode = right;
-//		  centered = 0;
-//	  }
-//	  else{
-//		  mode = straight;
-//		  centered = 1;
-//	  }
-
-//	  if(check_dir == 1){
-//		  if(joystickXY[0] < 1000){
-//			  mode = right;
-//			  check_dir = 0;
-//		  }
-//		  else if(joystickXY[0] > 3000){
-//			  mode = left;
-//			  check_dir = 0;
-//		  }
-//		  else{
-//			  mode = straight;
-//		  }
-//	  }
-//	  else{
-//		  mode = straight;
-//		  if(joystickXY[0] >= 1000 && joystickXY[0] <= 3000){
-//			  mode = straight;
-//			  check_dir = 1;
-//		  }
-//	  }
-
-
-
-//	  switch(mode){
-//	  	  case straight:
-//	  		memset(str_hum, '\0', sizeof(str_hum));
-//	  		snprintf(str_hum, 100, "You're going straight...be careful of obstacles!\n\r");
-//	  		HAL_UART_Transmit(&huart1, (uint8_t*) str_hum, sizeof(str_hum), HAL_MAX_DELAY);
-////	  		HAL_Delay(100);
-//	  		break;
-//	  	  case left:
-//	  		memset(str_hum, '\0', sizeof(str_hum));
-//	  		snprintf(str_hum, 100, "Okay, moving to the left!\n\r");
-//	  		HAL_UART_Transmit(&huart1, (uint8_t*) str_hum, sizeof(str_hum), HAL_MAX_DELAY);
-////	  		HAL_Delay(100);
-//	  		break;
-//	  	  case right:
-//	  		memset(str_hum, '\0', sizeof(str_hum));
-//	  		snprintf(str_hum, 100, "Okay, moving to the right!\n\r");
-//	  		HAL_UART_Transmit(&huart1, (uint8_t*) str_hum, sizeof(str_hum), HAL_MAX_DELAY);
-////	  		HAL_Delay(100);
-//	  		break;
-//	  	  default:
-//	  }
-
 	  HAL_Delay(500);
-	  display_map(top_row);
 	  update_map();
-//	   Start keeping score
+	  if (collision) end_game();
 	  score++;
-//	  memset(str_hum, '\0', sizeof(str_hum));
-//	  snprintf(str_hum, 100, "Horizontal position: %d\n\r", char_horz_pos);
-//	  HAL_UART_Transmit(&huart1, (uint8_t*) str_hum, sizeof(str_hum), HAL_MAX_DELAY);
-//	  HAL_Delay(500);
-
-
+	  display_map(top_row);
   }
   /* USER CODE END 3 */
 }
@@ -1129,16 +1096,21 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 	}
 
 	if (htim == &htim4){
+//	  char buf[30];
+//	  sprintf(buf, "X: %d, Y: %d\r\n\n", joystickXY[0], joystickXY[1]);
+//	  HAL_UART_Transmit(&huart1, (uint8_t*) buf, sizeof(buf), 1000);
 		if(check_dir == 1){
 			if(joystickXY[0] < 1000){
 //				mode = right;
 				char_horz_pos = (char_horz_pos < 9) ? (char_horz_pos + 2) : char_horz_pos;
 				check_dir = 0;
+				display_map(top_row);
 			}
 			else if(joystickXY[0] > 3000){
 				char_horz_pos = (char_horz_pos > 1) ? (char_horz_pos - 2) : char_horz_pos;
 //				mode = left;
 				check_dir = 0;
+				display_map(top_row);
 			}
 //			else{
 //				//char_horz_pos = char_horz_pos;

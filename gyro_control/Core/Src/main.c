@@ -18,6 +18,7 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
+#include "cmsis_os.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
@@ -93,9 +94,14 @@ TIM_HandleTypeDef htim2;
 TIM_HandleTypeDef htim3;
 TIM_HandleTypeDef htim4;
 TIM_HandleTypeDef htim5;
+TIM_HandleTypeDef htim8;
 
 UART_HandleTypeDef huart1;
 
+osThreadId GameplayTaskHandle;
+osThreadId UARTTaskHandle;
+osThreadId JoystickTaskHandle;
+osThreadId MusicTaskHandle;
 /* USER CODE BEGIN PV */
 //float gyro[3];
 char str_hum[100] = "";
@@ -108,12 +114,16 @@ enum state{
 	straight, left, right
 };
 
-volatile int check_dir = 1;
 
-uint32_t song_index = 0;
 uint8_t state = 0;
 
-
+uint8_t new_joystick_sample = FALSE;
+uint8_t update_map = FALSE;
+uint8_t refresh_map = FALSE;
+uint8_t display_scores = FALSE;
+uint8_t switch_note = FALSE;
+int high_scores[11];
+uint8_t top_row = 0;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -131,6 +141,12 @@ static void MX_TIM2_Init(void);
 static void MX_TIM5_Init(void);
 static void MX_DAC1_Init(void);
 static void MX_TIM4_Init(void);
+static void MX_TIM8_Init(void);
+void StartGameplayTask(void const * argument);
+void StartUARTTask(void const * argument);
+void StartJoystickTask(void const * argument);
+void StartMusicTask(void const * argument);
+
 /* USER CODE BEGIN PFP */
 void gen_music(void);
 void gen_sine(void);
@@ -143,7 +159,6 @@ void gen_notes(void);
 char clear_screen[6] = {0x1B, 0x5B, 0x32, 0x4A, 0x00, 0x0d};
 
 int score = 0;
-float collision = 0;
 
 uint32_t note_0[NOTE_0_SIZE];
 uint32_t note_1[NOTE_1_SIZE];
@@ -169,55 +184,6 @@ char map[N_ROWS][2 * N_COLS +1 +2 +1] = { // +1 (last vert pipe) +2 (newline) +1
 };
 
 char score_string[2 * N_COLS +2] = "";
-
-
-
-uint8_t top_row = 0;
-
-uint8_t expected_lane = 5; // Character starts in lane 5
-
-void update_map() {
-  uint32_t rand_num;
-  HAL_RNG_GenerateRandomNumber(&hrng, &rand_num);
-
-  uint8_t past_expected_lane = expected_lane;
-  if (rand_num & 1) { // Determine if expected lane changes
-    if (expected_lane == 1) {
-      expected_lane = 3;
-    }
-    else if (expected_lane == 9) {
-      expected_lane = 7;
-    }
-    else { // Determine if going right or left
-      if ((rand_num >> 2) & 1) {
-        expected_lane += 2;
-      }
-      else {
-        expected_lane -= 2;
-      }
-    }
-  }
-
-  for (int col = 1; col <= 2 * N_COLS - 1; col += 2) {
-    if (col == past_expected_lane || col == expected_lane) {
-      map[top_row][col] = ' ';
-      continue;
-    }
-
-    if ((rand_num >> col) & 1) {
-      map[top_row][col] = 'X';
-    }
-    else {
-      map[top_row][col] = ' ';
-    }
-  }
-  top_row = (top_row + 1) % N_ROWS;
-
-  //   Detects collision
-  if(map[(top_row + char_vert_pos) % N_ROWS][char_horz_pos] == 'X'){
-	  collision = TRUE;
-  }
-}
 
 void display_map(uint8_t start_row) {
   // First, clear console
@@ -325,6 +291,7 @@ int main(void)
   MX_TIM5_Init();
   MX_DAC1_Init();
   MX_TIM4_Init();
+  MX_TIM8_Init();
   /* USER CODE BEGIN 2 */
 
   HAL_ADC_Start_DMA(&hadc1, (uint32_t* ) joystickXY, 2);
@@ -349,6 +316,47 @@ int main(void)
 
   /* USER CODE END 2 */
 
+  /* USER CODE BEGIN RTOS_MUTEX */
+  /* add mutexes, ... */
+  /* USER CODE END RTOS_MUTEX */
+
+  /* USER CODE BEGIN RTOS_SEMAPHORES */
+  /* add semaphores, ... */
+  /* USER CODE END RTOS_SEMAPHORES */
+
+  /* USER CODE BEGIN RTOS_TIMERS */
+  /* start timers, add new ones, ... */
+  /* USER CODE END RTOS_TIMERS */
+
+  /* USER CODE BEGIN RTOS_QUEUES */
+  /* add queues, ... */
+  /* USER CODE END RTOS_QUEUES */
+
+  /* Create the thread(s) */
+  /* definition and creation of GameplayTask */
+  osThreadDef(GameplayTask, StartGameplayTask, osPriorityNormal, 0, 128);
+  GameplayTaskHandle = osThreadCreate(osThread(GameplayTask), NULL);
+
+  /* definition and creation of UARTTask */
+  osThreadDef(UARTTask, StartUARTTask, osPriorityIdle, 0, 128);
+  UARTTaskHandle = osThreadCreate(osThread(UARTTask), NULL);
+
+  /* definition and creation of JoystickTask */
+  osThreadDef(JoystickTask, StartJoystickTask, osPriorityIdle, 0, 128);
+  JoystickTaskHandle = osThreadCreate(osThread(JoystickTask), NULL);
+
+  /* definition and creation of MusicTask */
+  osThreadDef(MusicTask, StartMusicTask, osPriorityIdle, 0, 128);
+  MusicTaskHandle = osThreadCreate(osThread(MusicTask), NULL);
+
+  /* USER CODE BEGIN RTOS_THREADS */
+  /* add threads, ... */
+  /* USER CODE END RTOS_THREADS */
+
+  /* Start scheduler */
+  osKernelStart();
+
+  /* We should never get here as control is now taken by the scheduler */
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1)
@@ -356,11 +364,6 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-	  HAL_Delay(500);
-	  update_map();
-	  if (collision) end_game();
-	  score++;
-	  display_map(top_row);
   }
   /* USER CODE END 3 */
 }
@@ -732,9 +735,9 @@ static void MX_TIM3_Init(void)
 
   /* USER CODE END TIM3_Init 1 */
   htim3.Instance = TIM3;
-  htim3.Init.Prescaler = 1-1;
+  htim3.Init.Prescaler = 0;
   htim3.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim3.Init.Period = 8000-1;
+  htim3.Init.Period = 8000;
   htim3.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
   htim3.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
   if (HAL_TIM_Base_Init(&htim3) != HAL_OK)
@@ -789,9 +792,9 @@ static void MX_TIM4_Init(void)
 
   /* USER CODE END TIM4_Init 1 */
   htim4.Instance = TIM4;
-  htim4.Init.Prescaler = 10-1;
+  htim4.Init.Prescaler = 10;
   htim4.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim4.Init.Period = 8000-1;
+  htim4.Init.Period = 8000;
   htim4.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
   htim4.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
   if (HAL_TIM_Base_Init(&htim4) != HAL_OK)
@@ -861,6 +864,53 @@ static void MX_TIM5_Init(void)
 }
 
 /**
+  * @brief TIM8 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM8_Init(void)
+{
+
+  /* USER CODE BEGIN TIM8_Init 0 */
+
+  /* USER CODE END TIM8_Init 0 */
+
+  TIM_ClockConfigTypeDef sClockSourceConfig = {0};
+  TIM_MasterConfigTypeDef sMasterConfig = {0};
+
+  /* USER CODE BEGIN TIM8_Init 1 */
+
+  /* USER CODE END TIM8_Init 1 */
+  htim8.Instance = TIM8;
+  htim8.Init.Prescaler = 2000;
+  htim8.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim8.Init.Period = 2000;
+  htim8.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim8.Init.RepetitionCounter = 0;
+  htim8.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  if (HAL_TIM_Base_Init(&htim8) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sClockSourceConfig.ClockSource = TIM_CLOCKSOURCE_INTERNAL;
+  if (HAL_TIM_ConfigClockSource(&htim8, &sClockSourceConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
+  sMasterConfig.MasterOutputTrigger2 = TIM_TRGO2_RESET;
+  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+  if (HAL_TIMEx_MasterConfigSynchronization(&htim8, &sMasterConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM8_Init 2 */
+
+  /* USER CODE END TIM8_Init 2 */
+
+}
+
+/**
   * @brief USART1 Initialization Function
   * @param None
   * @retval None
@@ -906,10 +956,10 @@ static void MX_DMA_Init(void)
 
   /* DMA interrupt init */
   /* DMA1_Channel1_IRQn interrupt configuration */
-  HAL_NVIC_SetPriority(DMA1_Channel1_IRQn, 0, 0);
+  HAL_NVIC_SetPriority(DMA1_Channel1_IRQn, 5, 0);
   HAL_NVIC_EnableIRQ(DMA1_Channel1_IRQn);
   /* DMA1_Channel3_IRQn interrupt configuration */
-  HAL_NVIC_SetPriority(DMA1_Channel3_IRQn, 0, 0);
+  HAL_NVIC_SetPriority(DMA1_Channel3_IRQn, 5, 0);
   HAL_NVIC_EnableIRQ(DMA1_Channel3_IRQn);
 
 }
@@ -948,7 +998,7 @@ static void MX_GPIO_Init(void)
   HAL_GPIO_Init(PB_GPIO_Port, &GPIO_InitStruct);
 
   /* EXTI interrupt init*/
-  HAL_NVIC_SetPriority(EXTI15_10_IRQn, 0, 0);
+  HAL_NVIC_SetPriority(EXTI15_10_IRQn, 5, 0);
   HAL_NVIC_EnableIRQ(EXTI15_10_IRQn);
 
 /* USER CODE BEGIN MX_GPIO_Init_2 */
@@ -1071,65 +1121,271 @@ void HAL_GPIO_EXTI_Callback (uint16_t GPIO_Pin){
 	}
 }
 
+
+/* USER CODE END 4 */
+
+/* USER CODE BEGIN Header_StartGameplayTask */
+/**
+  * @brief  Function implementing the GameplayTask thread.
+  * @param  argument: Not used
+  * @retval None
+  */
+/* USER CODE END Header_StartGameplayTask */
+void StartGameplayTask(void const * argument)
+{
+  /* USER CODE BEGIN 5 */
+  uint32_t rand_num;
+  uint8_t expected_lane = 5; // Character starts in lane 5
+  uint8_t past_expected_lane;
+  uint8_t collision = FALSE;
+
+  /* Infinite loop */
+  for(;;)
+  {
+    osDelay(50);
+
+    if (!update_map) continue;
+
+    HAL_RNG_GenerateRandomNumber(&hrng, &rand_num);
+
+    past_expected_lane = expected_lane;
+    if (rand_num & 1) { // Determine if expected lane changes
+      if (expected_lane == 1) {
+        expected_lane = 3;
+      }
+      else if (expected_lane == 9) {
+        expected_lane = 7;
+      }
+      else { // Determine if going right or left
+        if ((rand_num >> 2) & 1) {
+          expected_lane += 2;
+        }
+        else {
+          expected_lane -= 2;
+        }
+      }
+    }
+
+    for (int col = 1; col <= 2 * N_COLS - 1; col += 2) {
+      if (col == past_expected_lane || col == expected_lane) {
+        map[top_row][col] = ' ';
+        continue;
+      }
+
+      if ((rand_num >> col) & 1) {
+        map[top_row][col] = 'X';
+      }
+      else {
+        map[top_row][col] = ' ';
+      }
+    }
+    top_row = (top_row + 1) % N_ROWS;
+    update_map = FALSE;
+    refresh_map = TRUE;
+
+    //   Detects collision
+    if (map[(top_row + char_vert_pos) % N_ROWS][char_horz_pos] == 'X') {
+      HAL_TIM_Base_Stop_IT(&htim4);
+
+      // Place score in top 10
+      if (BSP_QSPI_Read(high_scores, (uint32_t) SCORE_ADDR, sizeof(high_scores)) != QSPI_OK) {
+        Error_Handler();
+      }
+
+      for (int rank = 9; rank>=0; rank--) {
+        if (score > high_scores[rank]) {
+          high_scores[rank+1] = high_scores[rank];
+        }
+        else {
+          high_scores[rank+1] = score;
+          break;
+        }
+      }
+      if (score > high_scores[0]) high_scores[0] = score;
+
+      // Save top 10
+      if (BSP_QSPI_Erase_Block((uint32_t) SCORE_ADDR) != QSPI_OK) {
+        Error_Handler();
+      }
+      if (BSP_QSPI_Write(high_scores, (uint32_t) SCORE_ADDR, sizeof(high_scores)) != QSPI_OK) {
+        Error_Handler();
+      }
+
+      // Display top 10
+      display_scores = TRUE;
+      while (1) {
+        osDelay(100);
+      }
+    }
+  }
+  /* USER CODE END 5 */
+}
+
+/* USER CODE BEGIN Header_StartUARTTask */
+/**
+* @brief Function implementing the UARTTask thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_StartUARTTask */
+void StartUARTTask(void const * argument)
+{
+  /* USER CODE BEGIN StartUARTTask */
+
+  /* Infinite loop */
+  for(;;)
+  {
+    osDelay(50);
+
+    if (refresh_map) {
+      // First, clear console
+      HAL_UART_Transmit(&huart1, (uint8_t*) clear_screen, sizeof(clear_screen), 1000);
+
+
+      char real_char = map[(top_row + char_vert_pos) % N_ROWS][char_horz_pos];
+      map[(top_row + char_vert_pos) % N_ROWS][char_horz_pos] = 'O';
+
+      // Display map
+      for (int row = 0; row < N_ROWS; row++) {
+        HAL_UART_Transmit(&huart1, (uint8_t*) map[(top_row + row) % N_ROWS], sizeof(map[row]), 1000);
+      }
+
+      map[(top_row + char_vert_pos) % N_ROWS][char_horz_pos] = real_char;
+
+      sprintf(score_string, "Score:%5d", score); // TODO: Change hardcoded value
+      HAL_UART_Transmit(&huart1, (uint8_t*) score_string, sizeof(score_string), 1000);
+      refresh_map = FALSE;
+    }
+
+    if (display_scores) {
+      HAL_UART_Transmit(&huart1, (uint8_t*) clear_screen, sizeof(clear_screen), 1000);
+      char title[] = "High scores:\r\n";
+      HAL_UART_Transmit(&huart1, (uint8_t*) title, sizeof(title), 1000);
+
+      char ranking_line[20] = "";
+      for (int rank=1; rank<=10; rank++) {
+        sprintf(ranking_line, "%2d  %5d\r\n", rank, high_scores[rank-1]);
+        HAL_UART_Transmit(&huart1, (uint8_t*) ranking_line, sizeof(ranking_line), 1000);
+      }
+
+      char buf[100] = "";
+      sprintf(buf, "\nYour score: %d points", score);
+      HAL_UART_Transmit(&huart1, (uint8_t*) buf, sizeof(buf), 1000);
+      display_scores = FALSE;
+    }
+  }
+  /* USER CODE END StartUARTTask */
+}
+
+/* USER CODE BEGIN Header_StartJoystickTask */
+/**
+* @brief Function implementing the JoystickTask thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_StartJoystickTask */
+void StartJoystickTask(void const * argument)
+{
+  /* USER CODE BEGIN StartJoystickTask */
+  uint8_t check_direction = TRUE;
+  /* Infinite loop */
+  for(;;)
+  {
+    osDelay(50);
+    if (!new_joystick_sample) continue;
+
+    if (check_direction) {
+      if(joystickXY[0] < 1000){
+        char_horz_pos = (char_horz_pos < 9) ? (char_horz_pos + 2) : char_horz_pos;
+        check_direction = FALSE;
+        refresh_map = TRUE;
+      }
+      else if(joystickXY[0] > 3000){
+        char_horz_pos = (char_horz_pos > 1) ? (char_horz_pos - 2) : char_horz_pos;
+        check_direction = FALSE;
+        refresh_map = TRUE;
+      }
+    }
+    else{
+      if(joystickXY[0] >= 1000 && joystickXY[0] <= 3000){
+        check_direction = TRUE;
+      }
+    }
+
+    new_joystick_sample = FALSE;
+  }
+  /* USER CODE END StartJoystickTask */
+}
+
+/* USER CODE BEGIN Header_StartMusicTask */
+/**
+* @brief Function implementing the MusicTask thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_StartMusicTask */
+void StartMusicTask(void const * argument)
+{
+  /* USER CODE BEGIN StartMusicTask */
+  uint8_t song_index = 0;
+
+  /* Infinite loop */
+  for(;;)
+  {
+    osDelay(50);
+    if (!switch_note) continue;
+
+    HAL_DAC_Stop_DMA(&hdac1, DAC_CHANNEL_1);  // Stop playing looped audio
+    switch(song_index) {
+      case 0:
+        HAL_DAC_Start_DMA(&hdac1, DAC_CHANNEL_1, note_0, NOTE_0_SIZE, DAC_ALIGN_12B_R);
+         break;
+      case 1:
+        HAL_DAC_Start_DMA(&hdac1, DAC_CHANNEL_1, note_1, NOTE_1_SIZE, DAC_ALIGN_12B_R);
+         break;
+      case 2:
+        HAL_DAC_Start_DMA(&hdac1, DAC_CHANNEL_1, note_2, NOTE_2_SIZE, DAC_ALIGN_12B_R);
+        break;
+      case 3:
+        HAL_DAC_Start_DMA(&hdac1, DAC_CHANNEL_1, note_3, NOTE_3_SIZE, DAC_ALIGN_12B_R);
+        break;
+      case 4:
+        HAL_DAC_Start_DMA(&hdac1, DAC_CHANNEL_1, note_4, NOTE_4_SIZE, DAC_ALIGN_12B_R);
+        break;
+      case 5:
+        HAL_DAC_Start_DMA(&hdac1, DAC_CHANNEL_1, note_5, NOTE_5_SIZE, DAC_ALIGN_12B_R);
+        break;
+      default:
+    }
+    song_index = (song_index + 1) % 6;
+    switch_note = FALSE;
+  }
+  /* USER CODE END StartMusicTask */
+}
+
+/**
+  * @brief  Period elapsed callback in non blocking mode
+  * @note   This function is called  when TIM6 interrupt took place, inside
+  * HAL_TIM_IRQHandler(). It makes a direct call to HAL_IncTick() to increment
+  * a global variable "uwTick" used as application time base.
+  * @param  htim : TIM handle
+  * @retval None
+  */
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 {
   /* USER CODE BEGIN Callback 0 */
 	// TODO: USE
-	if (htim == &htim5){
-		HAL_DAC_Stop_DMA(&hdac1, DAC_CHANNEL_1);	// Stop playing looped audio
-		switch(song_index) {
-			case 0:
-				HAL_DAC_Start_DMA(&hdac1, DAC_CHANNEL_1, note_0, NOTE_0_SIZE, DAC_ALIGN_12B_R);
-				 break;
-			case 1:
-				HAL_DAC_Start_DMA(&hdac1, DAC_CHANNEL_1, note_1, NOTE_1_SIZE, DAC_ALIGN_12B_R);
-				 break;
-			case 2:
-				HAL_DAC_Start_DMA(&hdac1, DAC_CHANNEL_1, note_2, NOTE_2_SIZE, DAC_ALIGN_12B_R);
-				break;
-			case 3:
-				HAL_DAC_Start_DMA(&hdac1, DAC_CHANNEL_1, note_3, NOTE_3_SIZE, DAC_ALIGN_12B_R);
-				break;
-			case 4:
-				HAL_DAC_Start_DMA(&hdac1, DAC_CHANNEL_1, note_4, NOTE_4_SIZE, DAC_ALIGN_12B_R);
-				break;
-			case 5:
-				HAL_DAC_Start_DMA(&hdac1, DAC_CHANNEL_1, note_5, NOTE_5_SIZE, DAC_ALIGN_12B_R);
-				break;
-			default:
-
-				 }
-			song_index = (song_index + 1) % 6;
+  static uint16_t game_update_counter = 0;
+	if (htim == &htim4) {
+	  new_joystick_sample = TRUE;
+	  if (++game_update_counter == 500) {
+	    update_map = TRUE;
+	    game_update_counter = 0;
+	  }
 	}
-
-	if (htim == &htim4){
-//	  char buf[30];
-//	  sprintf(buf, "X: %d, Y: %d\r\n\n", joystickXY[0], joystickXY[1]);
-//	  HAL_UART_Transmit(&huart1, (uint8_t*) buf, sizeof(buf), 1000);
-		if(check_dir == 1){
-			if(joystickXY[0] < 1000){
-//				mode = right;
-				char_horz_pos = (char_horz_pos < 9) ? (char_horz_pos + 2) : char_horz_pos;
-				check_dir = 0;
-				display_map(top_row);
-			}
-			else if(joystickXY[0] > 3000){
-				char_horz_pos = (char_horz_pos > 1) ? (char_horz_pos - 2) : char_horz_pos;
-//				mode = left;
-				check_dir = 0;
-				display_map(top_row);
-			}
-//			else{
-//				//char_horz_pos = char_horz_pos;
-//			}
-		}
-		else{
-			if(joystickXY[0] >= 1000 && joystickXY[0] <= 3000){
-				check_dir = 1;
-			}
-		}
+	if (htim == &htim5) {
+	  switch_note = TRUE;
 	}
-
 
   /* USER CODE END Callback 0 */
   if (htim->Instance == TIM6) {
@@ -1139,9 +1395,6 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 
   /* USER CODE END Callback 1 */
 }
-
-
-/* USER CODE END 4 */
 
 /**
   * @brief  This function is executed in case of error occurrence.

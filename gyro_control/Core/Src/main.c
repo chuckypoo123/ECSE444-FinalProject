@@ -43,16 +43,17 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-#define N_COLS 5
-#define N_ROWS 10
 #define FALSE 0
 #define TRUE 1
 
+#define N_COLS 5
+#define N_ROWS 10
+
 #define JOYSTICK1 0
 
-#define SCORE_ADD 0
-#define SETTINGS_ADD 50
-#define MUSIC_ADD 100
+#define SCORE_ADDR (1 << 16)
+#define SETTINGS_ADDR 50
+#define MUSIC_ADDR 100
 #define VALUE_LIMIT 4000
 
 #define NOTE_0_SIZE 300
@@ -62,12 +63,12 @@
 #define NOTE_4_SIZE 200
 #define NOTE_5_SIZE 500
 
-#define NOTE_0_ADD MUSIC_ADD
-#define NOTE_1_ADD NOTE_0_ADD +  NOTE_0_SIZE														 *sizeof(uint32_t)
-#define NOTE_2_ADD NOTE_0_ADD + (NOTE_0_SIZE + NOTE_1_SIZE)											 *sizeof(uint32_t)
-#define NOTE_3_ADD NOTE_0_ADD + (NOTE_0_SIZE + NOTE_1_SIZE + NOTE_2_SIZE)							 *sizeof(uint32_t)
-#define NOTE_4_ADD NOTE_0_ADD + (NOTE_0_SIZE + NOTE_1_SIZE + NOTE_2_SIZE + NOTE_3_SIZE)				 *sizeof(uint32_t)
-#define NOTE_5_ADD NOTE_0_ADD + (NOTE_0_SIZE + NOTE_1_SIZE + NOTE_2_SIZE + NOTE_3_SIZE + NOTE_4_SIZE)*sizeof(uint32_t)
+#define NOTE_0_ADDR MUSIC_ADDR
+#define NOTE_1_ADDR NOTE_0_ADDR +  NOTE_0_SIZE														 *sizeof(uint32_t)
+#define NOTE_2_ADDR NOTE_0_ADDR + (NOTE_0_SIZE + NOTE_1_SIZE)											 *sizeof(uint32_t)
+#define NOTE_3_ADDR NOTE_0_ADDR + (NOTE_0_SIZE + NOTE_1_SIZE + NOTE_2_SIZE)							 *sizeof(uint32_t)
+#define NOTE_4_ADDR NOTE_0_ADDR + (NOTE_0_SIZE + NOTE_1_SIZE + NOTE_2_SIZE + NOTE_3_SIZE)				 *sizeof(uint32_t)
+#define NOTE_5_ADDR NOTE_0_ADDR + (NOTE_0_SIZE + NOTE_1_SIZE + NOTE_2_SIZE + NOTE_3_SIZE + NOTE_4_SIZE)*sizeof(uint32_t)
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -239,8 +240,10 @@ void display_map(uint8_t start_row) {
 
 void end_game() {
   // Place score in top 10
-  int cur_run_rank = 0;
-  int high_scores[11] = {666666, 55555, 4444, 333, 22, 1, 0, 0, 0, 0, 0};
+  int high_scores[11];
+  if (BSP_QSPI_Read(high_scores, (uint32_t) SCORE_ADDR, sizeof(high_scores)) != QSPI_OK) {
+    Error_Handler();
+  }
 
   for (int rank = 9; rank>=0; rank--) {
     if (score > high_scores[rank]) {
@@ -248,14 +251,18 @@ void end_game() {
     }
     else {
       high_scores[rank+1] = score;
-      // +2: +1 because variable rank is -1 from actual rank
-      //     and +1 because we are lower thank current actual rank
-      cur_run_rank = rank + 2;
       break;
     }
   }
+  if (score > high_scores[0]) high_scores[0] = score;
 
   // Save top 10
+  if (BSP_QSPI_Erase_Block((uint32_t) SCORE_ADDR) != QSPI_OK) {
+    Error_Handler();
+  }
+  if (BSP_QSPI_Write(high_scores, (uint32_t) SCORE_ADDR, sizeof(high_scores)) != QSPI_OK) {
+    Error_Handler();
+  }
 
   // Display top 10
   HAL_UART_Transmit(&huart1, (uint8_t*) clear_screen, sizeof(clear_screen), 1000);
@@ -264,12 +271,12 @@ void end_game() {
 
   char ranking_line[20] = "";
   for (int rank=1; rank<=10; rank++) {
-    sprintf(ranking_line, "%2d  %5d\r\n", rank, high_scores[rank]);
+    sprintf(ranking_line, "%2d  %5d\r\n", rank, high_scores[rank-1]);
     HAL_UART_Transmit(&huart1, (uint8_t*) ranking_line, sizeof(ranking_line), 1000);
   }
 
   char buf[100] = "";
-  sprintf(buf, "\n Your score: %d points", score);
+  sprintf(buf, "\nYour score: %d points", score);
   HAL_UART_Transmit(&huart1, (uint8_t*) buf, sizeof(buf), 1000);
 
   // Wait for new game to start...
@@ -952,22 +959,22 @@ static void MX_GPIO_Init(void)
 
 void gen_music(void){
 
-	if(BSP_QSPI_Read(note_0, NOTE_0_ADD, sizeof(uint32_t)*(NOTE_0_SIZE))!= QSPI_OK){
+	if(BSP_QSPI_Read(note_0, NOTE_0_ADDR, sizeof(uint32_t)*(NOTE_0_SIZE))!= QSPI_OK){
 		Error_Handler();
 	}
-	if(BSP_QSPI_Read(note_1, NOTE_1_ADD, sizeof(uint32_t)*(NOTE_1_SIZE))!= QSPI_OK){
+	if(BSP_QSPI_Read(note_1, NOTE_1_ADDR, sizeof(uint32_t)*(NOTE_1_SIZE))!= QSPI_OK){
 		Error_Handler();
 	}
-	if(BSP_QSPI_Read(note_2, NOTE_2_ADD, sizeof(uint32_t)*(NOTE_2_SIZE))!= QSPI_OK){
+	if(BSP_QSPI_Read(note_2, NOTE_2_ADDR, sizeof(uint32_t)*(NOTE_2_SIZE))!= QSPI_OK){
 		Error_Handler();
 	}
-	if(BSP_QSPI_Read(note_3, NOTE_3_ADD, sizeof(uint32_t)*(NOTE_3_SIZE))!= QSPI_OK){
+	if(BSP_QSPI_Read(note_3, NOTE_3_ADDR, sizeof(uint32_t)*(NOTE_3_SIZE))!= QSPI_OK){
 		Error_Handler();
 	}
-	if(BSP_QSPI_Read(note_4, NOTE_4_ADD, sizeof(uint32_t)*(NOTE_4_SIZE))!= QSPI_OK){
+	if(BSP_QSPI_Read(note_4, NOTE_4_ADDR, sizeof(uint32_t)*(NOTE_4_SIZE))!= QSPI_OK){
 		Error_Handler();
 	}
-	if(BSP_QSPI_Read(note_5, NOTE_5_ADD, sizeof(uint32_t)*(NOTE_5_SIZE))!= QSPI_OK){
+	if(BSP_QSPI_Read(note_5, NOTE_5_ADDR, sizeof(uint32_t)*(NOTE_5_SIZE))!= QSPI_OK){
 		Error_Handler();
 	}
 
@@ -1032,22 +1039,22 @@ void gen_notes(void){
 		theta += (2*PI)/(size);
 	}
 
-	if(BSP_QSPI_Write(note_0_temp, NOTE_0_ADD, sizeof(uint32_t)*(NOTE_0_SIZE))!= QSPI_OK){
+	if(BSP_QSPI_Write(note_0_temp, NOTE_0_ADDR, sizeof(uint32_t)*(NOTE_0_SIZE))!= QSPI_OK){
 		Error_Handler();
 	}
-	if(BSP_QSPI_Write(note_1_temp, NOTE_1_ADD, sizeof(uint32_t)*(NOTE_1_SIZE))!= QSPI_OK){
+	if(BSP_QSPI_Write(note_1_temp, NOTE_1_ADDR, sizeof(uint32_t)*(NOTE_1_SIZE))!= QSPI_OK){
 		Error_Handler();
 	}
-	if(BSP_QSPI_Write(note_2_temp, NOTE_2_ADD, sizeof(uint32_t)*(NOTE_2_SIZE))!= QSPI_OK){
+	if(BSP_QSPI_Write(note_2_temp, NOTE_2_ADDR, sizeof(uint32_t)*(NOTE_2_SIZE))!= QSPI_OK){
 		Error_Handler();
 	}
-	if(BSP_QSPI_Write(note_3_temp, NOTE_3_ADD, sizeof(uint32_t)*(NOTE_3_SIZE))!= QSPI_OK){
+	if(BSP_QSPI_Write(note_3_temp, NOTE_3_ADDR, sizeof(uint32_t)*(NOTE_3_SIZE))!= QSPI_OK){
 		Error_Handler();
 	}
-	if(BSP_QSPI_Write(note_4_temp, NOTE_4_ADD, sizeof(uint32_t)*(NOTE_4_SIZE))!= QSPI_OK){
+	if(BSP_QSPI_Write(note_4_temp, NOTE_4_ADDR, sizeof(uint32_t)*(NOTE_4_SIZE))!= QSPI_OK){
 		Error_Handler();
 	}
-	if(BSP_QSPI_Write(note_5_temp, NOTE_5_ADD, sizeof(uint32_t)*(NOTE_5_SIZE))!= QSPI_OK){
+	if(BSP_QSPI_Write(note_5_temp, NOTE_5_ADDR, sizeof(uint32_t)*(NOTE_5_SIZE))!= QSPI_OK){
 		Error_Handler();
 	}
 }

@@ -99,9 +99,9 @@ TIM_HandleTypeDef htim8;
 UART_HandleTypeDef huart1;
 
 osThreadId GameplayTaskHandle;
-osThreadId UARTTaskHandle;
 osThreadId JoystickTaskHandle;
 osThreadId MusicTaskHandle;
+osMutexId displayMapMutexHandle;
 /* USER CODE BEGIN PV */
 //float gyro[3];
 char str_hum[100] = "";
@@ -124,6 +124,8 @@ uint8_t display_scores = FALSE;
 uint8_t switch_note = FALSE;
 int high_scores[11];
 uint8_t top_row = 0;
+uint8_t collision = FALSE;
+uint32_t score = 0;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -143,7 +145,6 @@ static void MX_DAC1_Init(void);
 static void MX_TIM4_Init(void);
 static void MX_TIM8_Init(void);
 void StartGameplayTask(void const * argument);
-void StartUARTTask(void const * argument);
 void StartJoystickTask(void const * argument);
 void StartMusicTask(void const * argument);
 
@@ -157,8 +158,6 @@ void gen_notes(void);
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
 char clear_screen[6] = {0x1B, 0x5B, 0x32, 0x4A, 0x00, 0x0d};
-
-int score = 0;
 
 uint32_t note_0[NOTE_0_SIZE];
 uint32_t note_1[NOTE_1_SIZE];
@@ -185,26 +184,26 @@ char map[N_ROWS][2 * N_COLS +1 +2 +1] = { // +1 (last vert pipe) +2 (newline) +1
 
 char score_string[2 * N_COLS +2] = "";
 
-void display_map(uint8_t start_row) {
+void display_map() {
   // First, clear console
   HAL_UART_Transmit(&huart1, (uint8_t*) clear_screen, sizeof(clear_screen), 1000);
 
 
-	char real_char = map[(start_row + char_vert_pos) % N_ROWS][char_horz_pos];
-	map[(start_row + char_vert_pos) % N_ROWS][char_horz_pos] = 'O';
+	char real_char = map[(top_row + char_vert_pos) % N_ROWS][char_horz_pos];
+	map[(top_row + char_vert_pos) % N_ROWS][char_horz_pos] = 'O';
 
 	// Display map
 	for (int row = 0; row < N_ROWS; row++) {
-	  HAL_UART_Transmit(&huart1, (uint8_t*) map[(start_row + row) % N_ROWS], sizeof(map[row]), 1000);
+	  HAL_UART_Transmit(&huart1, (uint8_t*) map[(top_row + row) % N_ROWS], sizeof(map[row]), 1000);
 	}
 
-	map[(start_row + char_vert_pos) % N_ROWS][char_horz_pos] = real_char;
+	map[(top_row + char_vert_pos) % N_ROWS][char_horz_pos] = real_char;
 
 	sprintf(score_string, "Score:%5d", score); // TODO: Change hardcoded value
 	HAL_UART_Transmit(&huart1, (uint8_t*) score_string, sizeof(score_string), 1000);
 }
 
-void end_game() {
+void end_game(uint32_t score) {
   // Place score in top 10
   int high_scores[11];
   if (BSP_QSPI_Read(high_scores, (uint32_t) SCORE_ADDR, sizeof(high_scores)) != QSPI_OK) {
@@ -296,8 +295,6 @@ int main(void)
 
   HAL_ADC_Start_DMA(&hadc1, (uint32_t* ) joystickXY, 2);
   HAL_TIM_Base_Start_IT(&htim3);
-  HAL_TIM_Base_Start_IT(&htim4);
-//  enum state mode = straight;
 
   BSP_QSPI_Init();
 
@@ -315,6 +312,11 @@ int main(void)
 
 
   /* USER CODE END 2 */
+
+  /* Create the mutex(es) */
+  /* definition and creation of displayMapMutex */
+  osMutexDef(displayMapMutex);
+  displayMapMutexHandle = osMutexCreate(osMutex(displayMapMutex));
 
   /* USER CODE BEGIN RTOS_MUTEX */
   /* add mutexes, ... */
@@ -336,10 +338,6 @@ int main(void)
   /* definition and creation of GameplayTask */
   osThreadDef(GameplayTask, StartGameplayTask, osPriorityNormal, 0, 128);
   GameplayTaskHandle = osThreadCreate(osThread(GameplayTask), NULL);
-
-  /* definition and creation of UARTTask */
-  osThreadDef(UARTTask, StartUARTTask, osPriorityIdle, 0, 128);
-  UARTTaskHandle = osThreadCreate(osThread(UARTTask), NULL);
 
   /* definition and creation of JoystickTask */
   osThreadDef(JoystickTask, StartJoystickTask, osPriorityIdle, 0, 128);
@@ -1137,14 +1135,13 @@ void StartGameplayTask(void const * argument)
   uint32_t rand_num;
   uint8_t expected_lane = 5; // Character starts in lane 5
   uint8_t past_expected_lane;
-  uint8_t collision = FALSE;
+
+  display_map();
 
   /* Infinite loop */
   for(;;)
   {
-    osDelay(50);
-
-    if (!update_map) continue;
+    osDelay(500);
 
     HAL_RNG_GenerateRandomNumber(&hrng, &rand_num);
 
@@ -1180,101 +1177,17 @@ void StartGameplayTask(void const * argument)
       }
     }
     top_row = (top_row + 1) % N_ROWS;
-    update_map = FALSE;
-    refresh_map = TRUE;
 
-    //   Detects collision
+    // Checking if there is collision
     if (map[(top_row + char_vert_pos) % N_ROWS][char_horz_pos] == 'X') {
-      HAL_TIM_Base_Stop_IT(&htim4);
-
-      // Place score in top 10
-      if (BSP_QSPI_Read(high_scores, (uint32_t) SCORE_ADDR, sizeof(high_scores)) != QSPI_OK) {
-        Error_Handler();
-      }
-
-      for (int rank = 9; rank>=0; rank--) {
-        if (score > high_scores[rank]) {
-          high_scores[rank+1] = high_scores[rank];
-        }
-        else {
-          high_scores[rank+1] = score;
-          break;
-        }
-      }
-      if (score > high_scores[0]) high_scores[0] = score;
-
-      // Save top 10
-      if (BSP_QSPI_Erase_Block((uint32_t) SCORE_ADDR) != QSPI_OK) {
-        Error_Handler();
-      }
-      if (BSP_QSPI_Write(high_scores, (uint32_t) SCORE_ADDR, sizeof(high_scores)) != QSPI_OK) {
-        Error_Handler();
-      }
-
-      // Display top 10
-      display_scores = TRUE;
-      while (1) {
-        osDelay(100);
-      }
+      collision = TRUE;
+      end_game(score);
     }
+
+    score++;
+    display_map();
   }
   /* USER CODE END 5 */
-}
-
-/* USER CODE BEGIN Header_StartUARTTask */
-/**
-* @brief Function implementing the UARTTask thread.
-* @param argument: Not used
-* @retval None
-*/
-/* USER CODE END Header_StartUARTTask */
-void StartUARTTask(void const * argument)
-{
-  /* USER CODE BEGIN StartUARTTask */
-
-  /* Infinite loop */
-  for(;;)
-  {
-    osDelay(50);
-
-    if (refresh_map) {
-      // First, clear console
-      HAL_UART_Transmit(&huart1, (uint8_t*) clear_screen, sizeof(clear_screen), 1000);
-
-
-      char real_char = map[(top_row + char_vert_pos) % N_ROWS][char_horz_pos];
-      map[(top_row + char_vert_pos) % N_ROWS][char_horz_pos] = 'O';
-
-      // Display map
-      for (int row = 0; row < N_ROWS; row++) {
-        HAL_UART_Transmit(&huart1, (uint8_t*) map[(top_row + row) % N_ROWS], sizeof(map[row]), 1000);
-      }
-
-      map[(top_row + char_vert_pos) % N_ROWS][char_horz_pos] = real_char;
-
-      sprintf(score_string, "Score:%5d", score); // TODO: Change hardcoded value
-      HAL_UART_Transmit(&huart1, (uint8_t*) score_string, sizeof(score_string), 1000);
-      refresh_map = FALSE;
-    }
-
-    if (display_scores) {
-      HAL_UART_Transmit(&huart1, (uint8_t*) clear_screen, sizeof(clear_screen), 1000);
-      char title[] = "High scores:\r\n";
-      HAL_UART_Transmit(&huart1, (uint8_t*) title, sizeof(title), 1000);
-
-      char ranking_line[20] = "";
-      for (int rank=1; rank<=10; rank++) {
-        sprintf(ranking_line, "%2d  %5d\r\n", rank, high_scores[rank-1]);
-        HAL_UART_Transmit(&huart1, (uint8_t*) ranking_line, sizeof(ranking_line), 1000);
-      }
-
-      char buf[100] = "";
-      sprintf(buf, "\nYour score: %d points", score);
-      HAL_UART_Transmit(&huart1, (uint8_t*) buf, sizeof(buf), 1000);
-      display_scores = FALSE;
-    }
-  }
-  /* USER CODE END StartUARTTask */
 }
 
 /* USER CODE BEGIN Header_StartJoystickTask */
@@ -1292,18 +1205,17 @@ void StartJoystickTask(void const * argument)
   for(;;)
   {
     osDelay(50);
-    if (!new_joystick_sample) continue;
 
     if (check_direction) {
-      if(joystickXY[0] < 1000){
+      if(joystickXY[0] < 1000) {
         char_horz_pos = (char_horz_pos < 9) ? (char_horz_pos + 2) : char_horz_pos;
         check_direction = FALSE;
-        refresh_map = TRUE;
+        display_map();
       }
       else if(joystickXY[0] > 3000){
         char_horz_pos = (char_horz_pos > 1) ? (char_horz_pos - 2) : char_horz_pos;
         check_direction = FALSE;
-        refresh_map = TRUE;
+        display_map();
       }
     }
     else{
@@ -1312,7 +1224,11 @@ void StartJoystickTask(void const * argument)
       }
     }
 
-    new_joystick_sample = FALSE;
+    if (collision) {
+      while (1) {
+        osDelay(5000);
+      }
+    }
   }
   /* USER CODE END StartJoystickTask */
 }
@@ -1375,14 +1291,6 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 {
   /* USER CODE BEGIN Callback 0 */
 	// TODO: USE
-  static uint16_t game_update_counter = 0;
-	if (htim == &htim4) {
-	  new_joystick_sample = TRUE;
-	  if (++game_update_counter == 500) {
-	    update_map = TRUE;
-	    game_update_counter = 0;
-	  }
-	}
 	if (htim == &htim5) {
 	  switch_note = TRUE;
 	}

@@ -43,16 +43,17 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-#define N_COLS 5
-#define N_ROWS 10
 #define FALSE 0
 #define TRUE 1
 
+#define N_COLS 5
+#define N_ROWS 10
+
 #define JOYSTICK1 0
 
-#define SCORE_ADD 0
-#define SETTINGS_ADD 50
-#define MUSIC_ADD 100
+#define SCORE_ADDR (1 << 16)
+#define SETTINGS_ADDR 50
+#define MUSIC_ADDR 100
 #define VALUE_LIMIT 4000
 
 #define NOTE_0_SIZE 300
@@ -62,12 +63,12 @@
 #define NOTE_4_SIZE 200
 #define NOTE_5_SIZE 500
 
-#define NOTE_0_ADD MUSIC_ADD
-#define NOTE_1_ADD NOTE_0_ADD +  NOTE_0_SIZE														 *sizeof(uint32_t)
-#define NOTE_2_ADD NOTE_0_ADD + (NOTE_0_SIZE + NOTE_1_SIZE)											 *sizeof(uint32_t)
-#define NOTE_3_ADD NOTE_0_ADD + (NOTE_0_SIZE + NOTE_1_SIZE + NOTE_2_SIZE)							 *sizeof(uint32_t)
-#define NOTE_4_ADD NOTE_0_ADD + (NOTE_0_SIZE + NOTE_1_SIZE + NOTE_2_SIZE + NOTE_3_SIZE)				 *sizeof(uint32_t)
-#define NOTE_5_ADD NOTE_0_ADD + (NOTE_0_SIZE + NOTE_1_SIZE + NOTE_2_SIZE + NOTE_3_SIZE + NOTE_4_SIZE)*sizeof(uint32_t)
+#define NOTE_0_ADDR MUSIC_ADDR
+#define NOTE_1_ADDR NOTE_0_ADDR +  NOTE_0_SIZE														 *sizeof(uint32_t)
+#define NOTE_2_ADDR NOTE_0_ADDR + (NOTE_0_SIZE + NOTE_1_SIZE)											 *sizeof(uint32_t)
+#define NOTE_3_ADDR NOTE_0_ADDR + (NOTE_0_SIZE + NOTE_1_SIZE + NOTE_2_SIZE)							 *sizeof(uint32_t)
+#define NOTE_4_ADDR NOTE_0_ADDR + (NOTE_0_SIZE + NOTE_1_SIZE + NOTE_2_SIZE + NOTE_3_SIZE)				 *sizeof(uint32_t)
+#define NOTE_5_ADDR NOTE_0_ADDR + (NOTE_0_SIZE + NOTE_1_SIZE + NOTE_2_SIZE + NOTE_3_SIZE + NOTE_4_SIZE)*sizeof(uint32_t)
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -139,8 +140,9 @@ void gen_notes(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-char clear_screen[5] = {0x1B, 0x5B, 0x32, 0x4A, 0x00};
-float score = 0;
+char clear_screen[6] = {0x1B, 0x5B, 0x32, 0x4A, 0x00, 0x0d};
+
+int score = 0;
 float collision = 0;
 
 uint32_t note_0[NOTE_0_SIZE];
@@ -153,7 +155,7 @@ uint32_t note_5[NOTE_5_SIZE];
 // TODO: Make variables names more descriptive
 volatile uint8_t char_horz_pos = 5;
 uint8_t char_vert_pos = 1;
-char map[N_ROWS][2 * N_COLS + 1 + 3] = {
+char map[N_ROWS][2 * N_COLS +1 +2 +1] = { // +1 (last vert pipe) +2 (newline) +1 (stop char)
     "| | | | | |\r\n",
     "| | | | | |\r\n",
     "| | | | | |\r\n",
@@ -165,6 +167,10 @@ char map[N_ROWS][2 * N_COLS + 1 + 3] = {
     "| | | | | |\r\n",
     "| | | | | |\r\n",
 };
+
+char score_string[2 * N_COLS +2] = "";
+
+
 
 uint8_t top_row = 0;
 
@@ -217,30 +223,64 @@ void display_map(uint8_t start_row) {
   // First, clear console
   HAL_UART_Transmit(&huart1, (uint8_t*) clear_screen, sizeof(clear_screen), 1000);
 
-  if(collision == FALSE){
 
 	char real_char = map[(start_row + char_vert_pos) % N_ROWS][char_horz_pos];
 	map[(start_row + char_vert_pos) % N_ROWS][char_horz_pos] = 'O';
 
 	// Display map
 	for (int row = 0; row < N_ROWS; row++) {
-	HAL_UART_Transmit(&huart1, (uint8_t*) map[(start_row + row) % N_ROWS], sizeof(map[row]), 1000);
+	  HAL_UART_Transmit(&huart1, (uint8_t*) map[(start_row + row) % N_ROWS], sizeof(map[row]), 1000);
 	}
 
 	map[(start_row + char_vert_pos) % N_ROWS][char_horz_pos] = real_char;
-  }
-  else{
-	// We should also:
-	// display the high score
-	// Save the score if it beats the high score
-	char buf[100] = "";
-	sprintf(buf, "Score: %d points", (int) score);
-	HAL_UART_Transmit(&huart1, (uint8_t*) buf, sizeof(buf), 1000);
-	// Wait for new game to start...
-	while(1){
 
-	}
+	sprintf(score_string, "Score:%5d", score); // TODO: Change hardcoded value
+	HAL_UART_Transmit(&huart1, (uint8_t*) score_string, sizeof(score_string), 1000);
+}
+
+void end_game() {
+  // Place score in top 10
+  int high_scores[11];
+  if (BSP_QSPI_Read(high_scores, (uint32_t) SCORE_ADDR, sizeof(high_scores)) != QSPI_OK) {
+    Error_Handler();
   }
+
+  for (int rank = 9; rank>=0; rank--) {
+    if (score > high_scores[rank]) {
+      high_scores[rank+1] = high_scores[rank];
+    }
+    else {
+      high_scores[rank+1] = score;
+      break;
+    }
+  }
+  if (score > high_scores[0]) high_scores[0] = score;
+
+  // Save top 10
+  if (BSP_QSPI_Erase_Block((uint32_t) SCORE_ADDR) != QSPI_OK) {
+    Error_Handler();
+  }
+  if (BSP_QSPI_Write(high_scores, (uint32_t) SCORE_ADDR, sizeof(high_scores)) != QSPI_OK) {
+    Error_Handler();
+  }
+
+  // Display top 10
+  HAL_UART_Transmit(&huart1, (uint8_t*) clear_screen, sizeof(clear_screen), 1000);
+  char title[] = "High scores:\r\n";
+  HAL_UART_Transmit(&huart1, (uint8_t*) title, sizeof(title), 1000);
+
+  char ranking_line[20] = "";
+  for (int rank=1; rank<=10; rank++) {
+    sprintf(ranking_line, "%2d  %5d\r\n", rank, high_scores[rank-1]);
+    HAL_UART_Transmit(&huart1, (uint8_t*) ranking_line, sizeof(ranking_line), 1000);
+  }
+
+  char buf[100] = "";
+  sprintf(buf, "\nYour score: %d points", score);
+  HAL_UART_Transmit(&huart1, (uint8_t*) buf, sizeof(buf), 1000);
+
+  // Wait for new game to start...
+  while(1) {}
 }
 /* USER CODE END 0 */
 
@@ -316,77 +356,11 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-
-
-//	  if((joystickXY[0] >= 3000) || (centered == 1)){
-//		  mode = left;
-//		  centered = 0;
-//	  }
-//	  else if((joystickXY[0] <= 1000)  || (centered == 1)){
-//		  mode = right;
-//		  centered = 0;
-//	  }
-//	  else{
-//		  mode = straight;
-//		  centered = 1;
-//	  }
-
-//	  if(check_dir == 1){
-//		  if(joystickXY[0] < 1000){
-//			  mode = right;
-//			  check_dir = 0;
-//		  }
-//		  else if(joystickXY[0] > 3000){
-//			  mode = left;
-//			  check_dir = 0;
-//		  }
-//		  else{
-//			  mode = straight;
-//		  }
-//	  }
-//	  else{
-//		  mode = straight;
-//		  if(joystickXY[0] >= 1000 && joystickXY[0] <= 3000){
-//			  mode = straight;
-//			  check_dir = 1;
-//		  }
-//	  }
-
-
-
-//	  switch(mode){
-//	  	  case straight:
-//	  		memset(str_hum, '\0', sizeof(str_hum));
-//	  		snprintf(str_hum, 100, "You're going straight...be careful of obstacles!\n\r");
-//	  		HAL_UART_Transmit(&huart1, (uint8_t*) str_hum, sizeof(str_hum), HAL_MAX_DELAY);
-////	  		HAL_Delay(100);
-//	  		break;
-//	  	  case left:
-//	  		memset(str_hum, '\0', sizeof(str_hum));
-//	  		snprintf(str_hum, 100, "Okay, moving to the left!\n\r");
-//	  		HAL_UART_Transmit(&huart1, (uint8_t*) str_hum, sizeof(str_hum), HAL_MAX_DELAY);
-////	  		HAL_Delay(100);
-//	  		break;
-//	  	  case right:
-//	  		memset(str_hum, '\0', sizeof(str_hum));
-//	  		snprintf(str_hum, 100, "Okay, moving to the right!\n\r");
-//	  		HAL_UART_Transmit(&huart1, (uint8_t*) str_hum, sizeof(str_hum), HAL_MAX_DELAY);
-////	  		HAL_Delay(100);
-//	  		break;
-//	  	  default:
-//	  }
-
 	  HAL_Delay(500);
-	  display_map(top_row);
 	  update_map();
-//	   Start keeping score
+	  if (collision) end_game();
 	  score++;
-//	  memset(str_hum, '\0', sizeof(str_hum));
-//	  snprintf(str_hum, 100, "Horizontal position: %d\n\r", char_horz_pos);
-//	  HAL_UART_Transmit(&huart1, (uint8_t*) str_hum, sizeof(str_hum), HAL_MAX_DELAY);
-//	  HAL_Delay(500);
-
-
+	  display_map(top_row);
   }
   /* USER CODE END 3 */
 }
@@ -985,22 +959,22 @@ static void MX_GPIO_Init(void)
 
 void gen_music(void){
 
-	if(BSP_QSPI_Read(note_0, NOTE_0_ADD, sizeof(uint32_t)*(NOTE_0_SIZE))!= QSPI_OK){
+	if(BSP_QSPI_Read(note_0, NOTE_0_ADDR, sizeof(uint32_t)*(NOTE_0_SIZE))!= QSPI_OK){
 		Error_Handler();
 	}
-	if(BSP_QSPI_Read(note_1, NOTE_1_ADD, sizeof(uint32_t)*(NOTE_1_SIZE))!= QSPI_OK){
+	if(BSP_QSPI_Read(note_1, NOTE_1_ADDR, sizeof(uint32_t)*(NOTE_1_SIZE))!= QSPI_OK){
 		Error_Handler();
 	}
-	if(BSP_QSPI_Read(note_2, NOTE_2_ADD, sizeof(uint32_t)*(NOTE_2_SIZE))!= QSPI_OK){
+	if(BSP_QSPI_Read(note_2, NOTE_2_ADDR, sizeof(uint32_t)*(NOTE_2_SIZE))!= QSPI_OK){
 		Error_Handler();
 	}
-	if(BSP_QSPI_Read(note_3, NOTE_3_ADD, sizeof(uint32_t)*(NOTE_3_SIZE))!= QSPI_OK){
+	if(BSP_QSPI_Read(note_3, NOTE_3_ADDR, sizeof(uint32_t)*(NOTE_3_SIZE))!= QSPI_OK){
 		Error_Handler();
 	}
-	if(BSP_QSPI_Read(note_4, NOTE_4_ADD, sizeof(uint32_t)*(NOTE_4_SIZE))!= QSPI_OK){
+	if(BSP_QSPI_Read(note_4, NOTE_4_ADDR, sizeof(uint32_t)*(NOTE_4_SIZE))!= QSPI_OK){
 		Error_Handler();
 	}
-	if(BSP_QSPI_Read(note_5, NOTE_5_ADD, sizeof(uint32_t)*(NOTE_5_SIZE))!= QSPI_OK){
+	if(BSP_QSPI_Read(note_5, NOTE_5_ADDR, sizeof(uint32_t)*(NOTE_5_SIZE))!= QSPI_OK){
 		Error_Handler();
 	}
 
@@ -1065,22 +1039,22 @@ void gen_notes(void){
 		theta += (2*PI)/(size);
 	}
 
-	if(BSP_QSPI_Write(note_0_temp, NOTE_0_ADD, sizeof(uint32_t)*(NOTE_0_SIZE))!= QSPI_OK){
+	if(BSP_QSPI_Write(note_0_temp, NOTE_0_ADDR, sizeof(uint32_t)*(NOTE_0_SIZE))!= QSPI_OK){
 		Error_Handler();
 	}
-	if(BSP_QSPI_Write(note_1_temp, NOTE_1_ADD, sizeof(uint32_t)*(NOTE_1_SIZE))!= QSPI_OK){
+	if(BSP_QSPI_Write(note_1_temp, NOTE_1_ADDR, sizeof(uint32_t)*(NOTE_1_SIZE))!= QSPI_OK){
 		Error_Handler();
 	}
-	if(BSP_QSPI_Write(note_2_temp, NOTE_2_ADD, sizeof(uint32_t)*(NOTE_2_SIZE))!= QSPI_OK){
+	if(BSP_QSPI_Write(note_2_temp, NOTE_2_ADDR, sizeof(uint32_t)*(NOTE_2_SIZE))!= QSPI_OK){
 		Error_Handler();
 	}
-	if(BSP_QSPI_Write(note_3_temp, NOTE_3_ADD, sizeof(uint32_t)*(NOTE_3_SIZE))!= QSPI_OK){
+	if(BSP_QSPI_Write(note_3_temp, NOTE_3_ADDR, sizeof(uint32_t)*(NOTE_3_SIZE))!= QSPI_OK){
 		Error_Handler();
 	}
-	if(BSP_QSPI_Write(note_4_temp, NOTE_4_ADD, sizeof(uint32_t)*(NOTE_4_SIZE))!= QSPI_OK){
+	if(BSP_QSPI_Write(note_4_temp, NOTE_4_ADDR, sizeof(uint32_t)*(NOTE_4_SIZE))!= QSPI_OK){
 		Error_Handler();
 	}
-	if(BSP_QSPI_Write(note_5_temp, NOTE_5_ADD, sizeof(uint32_t)*(NOTE_5_SIZE))!= QSPI_OK){
+	if(BSP_QSPI_Write(note_5_temp, NOTE_5_ADDR, sizeof(uint32_t)*(NOTE_5_SIZE))!= QSPI_OK){
 		Error_Handler();
 	}
 }
@@ -1129,16 +1103,21 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 	}
 
 	if (htim == &htim4){
+//	  char buf[30];
+//	  sprintf(buf, "X: %d, Y: %d\r\n\n", joystickXY[0], joystickXY[1]);
+//	  HAL_UART_Transmit(&huart1, (uint8_t*) buf, sizeof(buf), 1000);
 		if(check_dir == 1){
 			if(joystickXY[0] < 1000){
 //				mode = right;
 				char_horz_pos = (char_horz_pos < 9) ? (char_horz_pos + 2) : char_horz_pos;
 				check_dir = 0;
+				display_map(top_row);
 			}
 			else if(joystickXY[0] > 3000){
 				char_horz_pos = (char_horz_pos > 1) ? (char_horz_pos - 2) : char_horz_pos;
 //				mode = left;
 				check_dir = 0;
+				display_map(top_row);
 			}
 //			else{
 //				//char_horz_pos = char_horz_pos;

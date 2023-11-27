@@ -170,8 +170,6 @@ char map[N_ROWS][2 * N_COLS +1 +2 +1] = { // +1 (last vert pipe) +2 (newline) +1
 
 char score_string[2 * N_COLS +2] = "";
 
-
-
 uint8_t top_row = 0;
 
 uint8_t expected_lane = 5; // Character starts in lane 5
@@ -238,6 +236,40 @@ void display_map(uint8_t start_row) {
 	HAL_UART_Transmit(&huart1, (uint8_t*) score_string, sizeof(score_string), 1000);
 }
 
+void main_menu() {
+  // Display menu options
+//  int selected = 0;
+//  print_menu_options(selected);
+//
+  // Wait for input
+//  while (1) {
+//    if (selected <joystickXY[1] > 3000) {
+//
+//    }
+//
+//  }
+
+  // Reset game variables in case we are restarting
+  collision = FALSE;
+  score = 0;
+  char_horz_pos = 5;
+  for (int row=0; row<10; row++) {
+    for (int lane=1; lane<=9; lane += 2) {
+      map[row][lane] = ' ';
+    }
+  }
+}
+
+void play_game() {
+  while (1) {
+    display_map(top_row);
+    HAL_Delay(500);
+    update_map();
+    if (collision) break;
+    score++;
+  }
+}
+
 void end_game() {
   // Place score in top 10
   int high_scores[11];
@@ -276,11 +308,18 @@ void end_game() {
   }
 
   char buf[100] = "";
-  sprintf(buf, "\nYour score: %d points", score);
+  sprintf(buf, "\nYour score: %d points\r\n\nMove the joystick in any direction to go back to the main menu", score);
   HAL_UART_Transmit(&huart1, (uint8_t*) buf, sizeof(buf), 1000);
 
   // Wait for new game to start...
-  while(1) {}
+  while (1) {
+    HAL_Delay(10);
+    if ((joystickXY[0] - 2000)*(joystickXY[0] - 2000)
+        + (joystickXY[1] - 2000)*(joystickXY[1] - 2000)
+        >= 1000) {
+        break;
+    }
+  }
 }
 /* USER CODE END 0 */
 
@@ -356,11 +395,9 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-	  HAL_Delay(500);
-	  update_map();
-	  if (collision) end_game();
-	  score++;
-	  display_map(top_row);
+    main_menu();
+    play_game();
+    end_game();
   }
   /* USER CODE END 3 */
 }

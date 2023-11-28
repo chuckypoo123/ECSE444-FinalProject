@@ -57,12 +57,12 @@
 #define MUSIC_ADDR 100
 #define VALUE_LIMIT 4000
 
-#define NOTE_0_SIZE 300
+#define NOTE_0_SIZE 200
 #define NOTE_1_SIZE 400
-#define NOTE_2_SIZE 800
+#define NOTE_2_SIZE 400
 #define NOTE_3_SIZE 300
 #define NOTE_4_SIZE 200
-#define NOTE_5_SIZE 500
+#define NOTE_5_SIZE 300
 
 #define NOTE_0_ADDR MUSIC_ADDR
 #define NOTE_1_ADDR NOTE_0_ADDR +  NOTE_0_SIZE														 *sizeof(uint32_t)
@@ -99,6 +99,7 @@ osThreadId GameplayTaskHandle;
 osThreadId JoystickTaskHandle;
 osThreadId MusicTaskHandle;
 osMutexId displayMapMutexHandle;
+osStaticMutexDef_t displayMapMutexControlBlock;
 /* USER CODE BEGIN PV */
 volatile uint16_t joystickXY[2]; //12 bit ADC so we use 16 bit unsigned ints
 
@@ -184,13 +185,14 @@ void display_map() {
 
 void end_game(uint32_t score) {
   // Place score in top 10
-  int high_scores[11]; // = {0,0,0,0,0,0,0,0,0,0,0};
-  if (BSP_QSPI_Read(high_scores, (uint32_t) SCORE_ADDR, sizeof(high_scores)) != QSPI_OK) {
+  HAL_DAC_Stop_DMA(&hdac1, DAC_CHANNEL_1);
+  int high_scores[11]= {0,0,0,0,0,0,0,0,0,0,0};
+  if (BSP_QSPI_Read(high_scores, (uint32_t) SCORE_ADDR, sizeof(int)*11) != QSPI_OK) {
     Error_Handler();
   }
 
   for (int rank = 9; rank>=0; rank--) {
-    if (score > high_scores[rank]) {
+    if ((int)score > high_scores[rank]) {
       high_scores[rank+1] = high_scores[rank];
     }
     else {
@@ -204,26 +206,30 @@ void end_game(uint32_t score) {
   if (BSP_QSPI_Erase_Block((uint32_t) SCORE_ADDR) != QSPI_OK) {
     Error_Handler();
   }
-  if (BSP_QSPI_Write(high_scores, (uint32_t) SCORE_ADDR, sizeof(high_scores)) != QSPI_OK) {
+  if (BSP_QSPI_Write(high_scores, (uint32_t) SCORE_ADDR, sizeof(int)*11) != QSPI_OK) {
     Error_Handler();
   }
 
+  uint32_t pause = 1000;
   // Display top 10
 //  osMutexWait(displayMapMutexHandle, 100);
-  HAL_UART_Transmit(&huart1, (uint8_t*) clear_screen, sizeof(clear_screen), 1000);
+  HAL_UART_Transmit(&huart1, (uint8_t*) clear_screen, sizeof(clear_screen), HAL_MAX_DELAY);
+//  HAL_Delay(pause);
   char title[] = "High scores:\r\n";
-  HAL_UART_Transmit(&huart1, (uint8_t*) title, sizeof(title), 1000);
+  HAL_UART_Transmit(&huart1, (uint8_t*) title, sizeof(title), HAL_MAX_DELAY);
+//  HAL_Delay(pause);
 
   char ranking_line[20] = "";
   for (int rank=1; rank<=10; rank++) {
     sprintf(ranking_line, "%2d  %5d\r\n", rank, high_scores[rank-1]);
-    HAL_UART_Transmit(&huart1, (uint8_t*) ranking_line, sizeof(ranking_line), 1000);
-//    osDelay(1);
+    HAL_UART_Transmit(&huart1, (uint8_t*) ranking_line, sizeof(ranking_line), HAL_MAX_DELAY);
+//    HAL_Delay(pause);
   }
 
   char buf[100] = "";
   sprintf(buf, "\nYour score: %d points", score);
-  HAL_UART_Transmit(&huart1, (uint8_t*) buf, sizeof(buf), 1000);
+  HAL_UART_Transmit(&huart1, (uint8_t*) buf, sizeof(buf), HAL_MAX_DELAY);
+//  HAL_Delay(pause);
 }
 /* USER CODE END 0 */
 
@@ -278,6 +284,9 @@ int main(void)
   if(BSP_QSPI_Erase_Block(0) != QSPI_OK){
 	  Error_Handler();
   }
+//  if(BSP_QSPI_Erase_Block(SCORE_ADDR) != QSPI_OK){
+//  	  Error_Handler();
+//    }
 
   gen_notes();
   gen_music();
@@ -289,7 +298,7 @@ int main(void)
 
   /* Create the mutex(es) */
   /* definition and creation of displayMapMutex */
-  osMutexDef(displayMapMutex);
+  osMutexStaticDef(displayMapMutex, &displayMapMutexControlBlock);
   displayMapMutexHandle = osMutexCreate(osMutex(displayMapMutex));
 
   /* USER CODE BEGIN RTOS_MUTEX */
@@ -1129,7 +1138,7 @@ void StartMusicTask(void const * argument)
         break;
       default:
     }
-    osDelay(500);
+//    osDelay(500);
   }
   /* USER CODE END StartMusicTask */
 }

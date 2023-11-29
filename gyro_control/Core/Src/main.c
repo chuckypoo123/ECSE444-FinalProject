@@ -44,6 +44,8 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
+#define ITM_Port32(n) (*((volatile unsigned long *) (0xE0000000+4*n)))
+
 #define FALSE 0
 #define TRUE 1
 
@@ -1021,6 +1023,8 @@ void StartGameplayTask(void const * argument)
     }
     top_row = (top_row + 1) % N_ROWS;
 
+    ITM_Port32(31) = 1;
+
     // Checking if there is collision
     if (map[(top_row + char_vert_pos) % N_ROWS][char_horz_pos] == 'X') {
       osMutexWait(displayMapMutexHandle, 100);
@@ -1062,6 +1066,7 @@ void StartJoystickTask(void const * argument)
 
     if (check_direction) {
       if(joystickXY[0] < 1000) {
+        ITM_Port32(31) = 2;
         // TODO: Claim display lock
         osMutexWait(displayMapMutexHandle, 100);
         char_horz_pos = (char_horz_pos < 9) ? (char_horz_pos + 2) : char_horz_pos;
@@ -1069,8 +1074,10 @@ void StartJoystickTask(void const * argument)
         display_map();
         // TODO: Release display lock
         osMutexRelease(displayMapMutexHandle);
+        ITM_Port32(31) = 3;
       }
       else if(joystickXY[0] > 3000){
+        ITM_Port32(31) = 2;
         // TODO: Claim display lock
         osMutexWait(displayMapMutexHandle, 100);
         char_horz_pos = (char_horz_pos > 1) ? (char_horz_pos - 2) : char_horz_pos;
@@ -1078,6 +1085,7 @@ void StartJoystickTask(void const * argument)
         display_map();
         // TODO: Release display lock
         osMutexRelease(displayMapMutexHandle);
+        ITM_Port32(31) = 3;
       }
     }
     else {

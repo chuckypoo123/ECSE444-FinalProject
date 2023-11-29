@@ -43,6 +43,8 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
+#define ITM_Port32(n) (*((volatile unsigned long *) (0xE0000000+4*n)))
+
 #define FALSE 0
 #define TRUE 1
 
@@ -261,12 +263,14 @@ void main_menu() {
 }
 
 void play_game() {
+  display_map(top_row);
   while (1) {
-    display_map(top_row);
     HAL_Delay(500);
     update_map();
+    ITM_Port32(31) = 1;
     if (collision) break;
     score++;
+    display_map(top_row);
   }
 }
 
